@@ -1,0 +1,109 @@
+{
+  "name": "canmouguan",
+  "productName": "参谋官",
+  "version": "0.1.0",
+  "description": "参谋官 —— Cluely 风格的半透明悬浮式面试辅助工具（本地优先）",
+  "main": "dist-electron/main/index.js",
+  "author": "参谋官",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -k -n TSC,VITE,ELEC -c blue,magenta,green \"npm:dev:tsc\" \"npm:dev:vite\" \"npm:dev:electron\"",
+    "dev:tsc": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput",
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 file:dist-electron/main/index.js && node scripts/start-electron.js .",
+    "build": "tsc -p tsconfig.electron.json && vite build",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
+    "start": "node scripts/start-electron.js . --dist",
+    "smoke": "node scripts/start-electron.js ./smoke.js",
+    "bench": "npm run build && node scripts/start-electron.js ./scripts/bench.js",
+    "dist": "npm run build && electron-builder --win --x64",
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir",
+    "verify:packaged": "node scripts/verify-packaged.js",
+    "verify:cloud": "node scripts/start-electron.js ./scripts/verify-cloud.js",
+    "verify:hide": "node scripts/start-electron.js ./scripts/verify-hide.js",
+    "verify:quit": "node scripts/verify-quit.js",
+    "verify:gpu": "node scripts/verify-gpu-fallback.js",
+    "test": "vitest run",
+    "test:secret": "node scripts/start-electron.js scripts/test-secret.js",
+    "dev:sw": "concurrently -k -n TSC,VITE,ELEC \"npm:dev:tsc\" \"npm:dev:vite\" \"wait-on tcp:5173 file:dist-electron/main/index.js && node scripts/start-electron.js . --sw-gl\""
+  },
+  "dependencies": {
+    "@types/dompurify": "^3.0.5",
+    "@types/react-window": "^1.8.8",
+    "chokidar": "^4.0.3",
+    "dompurify": "^3.4.15",
+    "gray-matter": "^4.0.3",
+    "marked": "^18.0.13",
+    "openai": "^7.17.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-window": "^2.3.1",
+    "ws": "^8.18.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/ws": "^8.5.13",
+    "@vitejs/plugin-react": "^5.1.0",
+    "concurrently": "^9.1.2",
+    "electron": "^44.4.1",
+    "electron-builder": "^26.15.3",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.7.3",
+    "vite": "^8.3.0",
+    "vitest": "^3.2.7",
+    "wait-on": "^9.0.1"
+  },
+  "build": {
+    "appId": "cloud.canmouguan.app",
+    "productName": "参谋官",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "knowledge/**/*",
+      "public/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "参谋官",
+      "artifactName": "canmouguan-${version}-setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "canmouguan-${version}-portable.${ext}"
+    },
+    "mac": {
+      "target": "dmg"
+    },
+    "linux": {
+      "target": "AppImage"
+    }
+  }
+}

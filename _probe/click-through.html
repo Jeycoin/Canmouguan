@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="../src/styles.css">
+<style>
+  /* 模拟「后面的网页」：白底深色正文，制造视觉冲突 */
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    background: #ffffff;
+    color: #111111;
+    font-family: -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+    font-size: 15px;
+  }
+  .page { padding: 26px 28px; }
+  .page h2 { font-size: 21px; margin-bottom: 10px; color: #111; }
+  .page p { line-height: 1.95; margin-bottom: 9px; color: #333; }
+  .page b { color: #000; }
+
+  /* 两个并排的悬浮窗：左=旧行为，右=修复后 */
+  .wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; gap: 26px; }
+  .app {
+    position: relative;
+    width: 400px;
+    height: 372px;
+    border-radius: 14px;
+  }
+  /*
+   * 旧行为复现：穿透态直接把背景压成半透明（这是被删掉的写法）。
+   * 注意必须覆盖 `background` 本身 —— `--bg` 在 :root 上就已把 var(--bg-alpha)
+   * 解析完了，在子元素上改 --bg-alpha 对 background: var(--bg) 是无效的。
+   */
+  .app.legacy { background: rgba(10, 12, 18, 0.55); }
+  .demo { padding: 13px 15px; color: var(--text); font-size: 13px; line-height: 1.72; }
+  .demo .who { font-size: 11px; color: var(--text-faint); margin-bottom: 5px; letter-spacing: .06em; }
+  .demo .q { background: rgba(255,255,255,.05); padding: 8px 10px; border-radius: 8px; margin-bottom: 10px; color: var(--text-dim); }
+  .demo .a { background: rgba(77,124,254,.14); border: 1px solid rgba(77,124,254,.3); padding: 9px 11px; border-radius: 8px; }
+  .demo ul { margin: 5px 0 0 15px; }
+  .demo li { margin-bottom: 3px; }
+  .badge {
+    position: absolute; top: -13px; left: 12px; z-index: 5;
+    font-size: 11px; padding: 2px 9px; border-radius: 999px;
+    background: #fff; color: #111; border: 1px solid #ccc; font-weight: 600;
+  }
+  .badge.bad { background: #ffe9e9; border-color: #e88; color: #a11; }
+  .badge.good { background: #e7f6ec; border-color: #7bc48f; color: #176b32; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <h2>订单系统的超卖治理与一致性保障</h2>
+    <p><b>背景：</b>大促期间秒杀活动瞬时并发极高，库存扣减必须保证不超卖，同时不能把数据库打穿。</p>
+    <p><b>方案：</b>采用 Redis 预扣库存，用 Lua 脚本把「判断库存」与「扣减库存」合并成一次原子操作，避免并发场景下的检查与扣减分离导致超卖。</p>
+    <p><b>降级：</b>Redis 不可用时退化为数据库行锁扣减，牺牲吞吐换取正确性；同时关闭非核心的营销玩法，保证主链路可用。</p>
+    <p><b>对账：</b>异步 MQ 补偿下单失败的请求，定时任务日级对账 Redis 与数据库库存差异，差异超过阈值告警并自动修复。</p>
+    <p><b>压测结论：</b>单机 Redis 在 8 万 QPS 下扣减稳定，P99 延迟 4 毫秒；数据库侧因为只有最终落库写，压力下降到原来的百分之三。</p>
+    <p>这段文字模拟面试时屏幕后面的网页内容，用来检验悬浮窗在穿透态下的可读性。</p>
+  </div>
+
+  <div class="wrap">
+    <div class="app click-through legacy" id="legacy">
+      <span class="badge bad">修复前 · --bg-alpha:0.55</span>
+      <div class="titlebar">
+        <div class="dots"><button class="dot close"></button><button class="dot min"></button><button class="dot hide"></button></div>
+        <span class="title">参谋官</span>
+      </div>
+      <div class="tabs"><div class="tab active">对话</div><div class="tab">知识库</div><div class="tab">记忆</div></div>
+      <div class="demo">
+        <div class="who">面试官 · 实时转写</div>
+        <div class="q">你们秒杀下单是怎么防止超卖的？</div>
+        <div class="who">参谋官 · Java</div>
+        <div class="a">
+          <b>结论</b>：Redis 预扣 + Lua 保原子，DB 唯一索引兜底。
+          <ul>
+            <li>DECR 返回 &lt;0 直接拒绝，不打穿 DB</li>
+            <li>Lua 让判断与扣减变成一步</li>
+            <li>MQ 异步补单 + 定时对账保最终一致</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="app click-through" id="fixed">
+      <span class="badge good">修复后 · 只改描边</span>
+      <div class="titlebar">
+        <div class="dots"><button class="dot close"></button><button class="dot min"></button><button class="dot hide"></button></div>
+        <span class="title">参谋官</span>
+      </div>
+      <div class="tabs"><div class="tab active">对话</div><div class="tab">知识库</div><div class="tab">记忆</div></div>
+      <div class="demo">
+        <div class="who">面试官 · 实时转写</div>
+        <div class="q">你们秒杀下单是怎么防止超卖的？</div>
+        <div class="who">参谋官 · Java</div>
+        <div class="a">
+          <b>结论</b>：Redis 预扣 + Lua 保原子，DB 唯一索引兜底。
+          <ul>
+            <li>DECR 返回 &lt;0 直接拒绝，不打穿 DB</li>
+            <li>Lua 让判断与扣减变成一步</li>
+            <li>MQ 异步补单 + 定时对账保最终一致</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

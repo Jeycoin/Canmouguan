@@ -1,0 +1,20 @@
+{
+  "name": "canmouguan-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "参谋官云端网关：统一提供 LLM / ASR 能力，客户端不再持有上游密钥",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "issue": "node bin/issue.js",
+    "test": "node test/sms-config.js && node test/selftest.js",
+    "selftest": "node test/selftest.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}

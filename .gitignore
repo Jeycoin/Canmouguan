@@ -1,0 +1,33 @@
+# ---- 依赖与构建产物 ----
+node_modules/
+dist/
+dist-electron/
+.vite/
+
+# ---- 打包产物（release/ release-build/ release-dc*/ release-ship/ …）----
+release/
+release-*/
+*.exe
+*.blockmap
+
+# ---- 本地环境与密钥（server/.gitignore 另有 .env / data/ 兜底）----
+.env
+server/.env
+server/data/
+
+# ---- 日志与临时产物 ----
+*.log
+.DS_Store
+Thumbs.db
+smoke.png
+smoke-settings.png
+# 探针截图不入库；_probe/*.html 与 *.js 是可复用的对比脚本，保留
+_probe/*.png
+
+# ---- 独立仓库 ----
+# web/ 是落地页，部署在 EdgeOne Pages，有它自己的 remote
+# （Jeycoin/interview_pilot_web），作为独立仓库维护，不入本仓库
+web/
+
+# ---- 助手工作数据（项目记忆等），不入库 ----
+.workbuddy/

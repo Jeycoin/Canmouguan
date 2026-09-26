@@ -1,0 +1,6 @@
+# 上游密钥与运行数据绝不入库
+.env
+data/
+
+# 依赖（部署时 npm i 即可）
+node_modules/

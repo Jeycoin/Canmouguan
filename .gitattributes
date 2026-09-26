@@ -1,0 +1,21 @@
+# 统一换行，避免 Windows/macOS 检出后把整个文件当改动重写
+* text=auto eol=lf
+
+# Windows 脚本保持 CRLF
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf
+
+# 二进制：不做换行转换、不算行级 diff
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.exe   binary
+*.dll   binary
+*.db    binary
+*.asar  binary
+*.pak   binary
+*.woff  binary
+*.woff2 binary
