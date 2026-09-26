@@ -108,7 +108,36 @@ truthy('全页不含「买断」', !all.includes('买断'));
 truthy('全页不含「免费版」', !all.includes('免费版'));
 truthy('全页不含 ¥99', !all.includes('\u00A599'));
 
-/* 7. 内联脚本必须整段跑完且零异常。放在最后 —— 前面所有断言都建立在这一条之上。 */
+/* 7. hero 副标题不能说成「登录就能用」——
+      没有兑换码时所有消耗性接口都会被服务端 402 拒掉，写成"登录即可用"会让买家装完才发现落差。 */
+const heroNote = document.querySelector('.hero__note');
+truthy('.hero__note 存在', heroNote);
+if (heroNote) {
+  const t = heroNote.textContent;
+  truthy('hero 不再写「登录即可用」', !t.includes('登录即可用'));
+  truthy('hero 点明需要兑换码开通', t.includes('兑换码'));
+}
+
+/* 8. 两条「不写清楚就会劝退 / 引发客诉」的 FAQ 必须在
+      —— 未签名触发 SmartScreen、以及为什么不提供免费试用。 */
+const faqSummaries = Array.from(document.querySelectorAll('#faq summary')).map((el) => el.textContent.trim());
+truthy('FAQ 覆盖「未知发布者」', faqSummaries.some((s) => s.includes('未知发布者')));
+truthy('FAQ 覆盖「免费试用」', faqSummaries.some((s) => s.includes('免费试用')));
+console.log(`       FAQ 共 ${faqSummaries.length} 条：${faqSummaries.join(' | ')}`);
+
+/* 9. 页面写的数据目录必须与 electron/main/appdir.ts 的 APP_DIR_NAME 一致。
+      产品改过名（interview-copilot → canmouguan），页面里留旧名会让用户去翻一个不存在的目录；
+      而本地早就迁移完、旧名只剩 LEGACY_DIR_NAMES 里的迁移来源 —— 靠人眼比对迟早漏。 */
+const appdirSrc = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main', 'appdir.ts'), 'utf8');
+const dirMatch = appdirSrc.match(/APP_DIR_NAME\s*=\s*'([^']+)'/);
+truthy('从 appdir.ts 解析出 APP_DIR_NAME', dirMatch);
+if (dirMatch) {
+  const dirName = dirMatch[1];
+  truthy(`页面提到 %APPDATA%/${dirName}/`, document.body.textContent.includes(`%APPDATA%/${dirName}/`));
+  console.log(`       APP_DIR_NAME = ${dirName}（段落无法比对，只看有没有出现）`);
+}
+
+/* 10. 内联脚本必须整段跑完且零异常。放在最后 —— 前面所有断言都建立在这一条之上。 */
 eq('内联脚本异常数', scriptErrors.length, 0);
 scriptErrors.forEach((m) => console.log('       ' + m));
 

@@ -51,8 +51,8 @@ node bin/issue.js usage <账号>
 **端到端自测**（不需要真实上游 Key，也不真的发短信，会起一个假上游 + 一个假短信服务商）：
 
 ```bash
-npm test              # = 短信配置闸门 + 端到端自测，共 91 项断言
-npm run selftest      # 只跑端到端那 83 项
+npm test              # = 短信配置闸门（8 项）+ 端到端自测（107 项），共 115 项断言
+npm run selftest      # 只跑端到端那 107 项
 ```
 
 自测会起**两个**网关实例：一个走 `console` 短信通道、一个走 `webhook`，
@@ -289,6 +289,6 @@ server/
     relay-asr.js        文件转写代理 + 实时 WS 双向透传与计量
   bin/issue.js          运营命令行
   test/sms-config.js    短信配置闸门（8 项断言，多环境变量组合）
-  test/selftest.js      端到端自测（假上游 + 假短信服务商，99 项断言）
+  test/selftest.js      端到端自测（假上游 + 假短信服务商，107 项断言）
   data/                 运行时数据（gitignore）
 ```
