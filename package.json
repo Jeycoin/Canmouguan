@@ -24,6 +24,7 @@
     "verify:hide": "node scripts/start-electron.js ./scripts/verify-hide.js",
     "verify:quit": "node scripts/verify-quit.js",
     "verify:gpu": "node scripts/verify-gpu-fallback.js",
+    "verify:web": "node scripts/verify-web-plans.js",
     "test": "vitest run",
     "test:secret": "node scripts/start-electron.js scripts/test-secret.js",
     "dev:sw": "concurrently -k -n TSC,VITE,ELEC \"npm:dev:tsc\" \"npm:dev:vite\" \"wait-on tcp:5173 file:dist-electron/main/index.js && node scripts/start-electron.js . --sw-gl\""
