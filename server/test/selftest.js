@@ -214,6 +214,58 @@ const BASE = `http://127.0.0.1:${PORT}`
 const PORT2 = 8900
 const BASE2 = `http://127.0.0.1:${PORT2}`
 
+/**
+ * 把 pro 的额度压到极小，才好在几步之内测出"耗尽 → 熔断"。
+ *
+ * ⚠️ 这两个值**必须和下面 spawn 网关时注入的环境变量是同一个常量** ——
+ * 分成两处写字面量，改了 env 忘了改断言（或反过来）时，
+ * 失败信息会指向"额度不对"，而真实原因是测试自己前后不一致。
+ *
+ * 注意产品**没有免费额度**：未开通的账号额度恒为 0，不需要（也无法）用环境变量去压。
+ */
+const PRO_ASR_SECONDS = 3
+const PRO_LLM_CALLS = 2
+
+/**
+ * 被测网关的环境变量。
+ *
+ * ⚠️ **必须显式写全，不能只靠 `process.env` 继承。**
+ *
+ * 网关启动时会加载它自己目录下的 `server/.env`（`lib/env.js` 的 `loadDotEnv` 只在
+ * 变量**未定义**时才跳过），于是开发机上的真实配置会渗进自测。实测踩过：
+ * `.env` 里一句 `CMG_ALLOW_SELF_REGISTER=0` 就让整个自测的注册链路全线失败
+ * （107 项里挂 58 项），而失败信息只会说"暂未开放自助注册" —— 完全指不到真实原因，
+ * 很容易被误判成"改坏了代码"。
+ *
+ * 自测的环境必须由自测自己决定，这是它还能不能当验收依据的前提。
+ */
+function gatewayEnv(extra = {}) {
+  return {
+    // 先铺一层真实环境（子进程仍需要 PATH / NODE_OPTIONS 之类）
+    ...process.env,
+    // 再覆盖成"自测专用"的配置 —— 顺序不能反
+    CMG_DATA_DIR: dataDir,
+    CMG_HOST: '127.0.0.1',
+    /** 自测要能自助注册：注册这条路不通，后面几十条用例全会被挡住 */
+    CMG_ALLOW_SELF_REGISTER: '1',
+    CMG_REGISTER_INVITE_CODE: '',
+    CMG_SMS_PROVIDER: 'console',
+    /* 商店信息用固定的假数据，别把开发机上真实的微信/邮箱带进断言 */
+    CMG_STORE_URL: 'https://example.com/buy',
+    CMG_STORE_WECHAT: 'canmouguan',
+    CMG_STORE_QQ: '',
+    CMG_STORE_EMAIL: '',
+    CMG_STORE_NOTE: '拍下后备注手机号',
+    CMG_PRICE_MONTH: '49',
+    /* 发卡回调：平台商品 ID 与套餐类型是两套命名，映射必须走配置 */
+    CMG_PAYHOOK_TOKEN: 'test-hook-token',
+    CMG_PAYHOOK_PRODUCTS: 'sku-month=month,sku-year=year',
+    CMG_PAYHOOK_MAX_COUNT: '20',
+    // 覆盖项放最后
+    ...extra
+  }
+}
+
 async function api(method, p, { token, body, raw, contentType, base } = {}) {
   const headers = {}
   if (token) headers.Authorization = `Bearer ${token}`
@@ -259,27 +311,17 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     process.execPath,
     [path.join(SERVER_DIR, 'index.js')],
     {
-      env: {
-        ...process.env,
-        CMG_DATA_DIR: dataDir,
-        CMG_HOST: '127.0.0.1',
+      env: gatewayEnv({
         CMG_PORT: String(PORT),
         CMG_DASHSCOPE_API_KEY: 'test-dashscope-key',
         CMG_DASHSCOPE_HTTP: `http://127.0.0.1:${mock.port}`,
         CMG_DASHSCOPE_WS: `ws://127.0.0.1:${mock.port}/api-ws/v1/inference/`,
         CMG_LLM_API_KEY: 'test-llm-key',
         CMG_LLM_BASE_URL: `http://127.0.0.1:${mock.port}`,
-        // 把免费额度压到很小，才好在几步之内测出"耗尽 → 拦截"
-        CMG_FREE_ASR_SECONDS: '3',
-        CMG_FREE_LLM_CALLS: '2',
-        // 发卡回调（收银台）：平台商品 ID 与套餐类型是两套命名，映射必须走配置
-        CMG_PAYHOOK_TOKEN: 'test-hook-token',
-        CMG_PAYHOOK_PRODUCTS: 'sku-month=month,sku-year=year',
-        CMG_STORE_URL: 'https://example.com/buy',
-        CMG_STORE_WECHAT: 'canmouguan',
-        CMG_STORE_NOTE: '拍下后备注手机号',
-        CMG_PRICE_MONTH: '49'
-      },
+        // 把 pro 额度压到很小，才好在几步之内测出"耗尽 → 熔断"
+        CMG_PRO_ASR_SECONDS: String(PRO_ASR_SECONDS),
+        CMG_PRO_LLM_CALLS: String(PRO_LLM_CALLS)
+      }),
       stdio: ['ignore', 'pipe', 'pipe']
     }
   )
@@ -370,8 +412,17 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     check('注册成功', reg.status === 200 && reg.json?.ok === true, reg.json?.message || `status=${reg.status}`)
     const token = reg.json?.token
     check('注册返回 token', typeof token === 'string' && token.startsWith('v1.'))
-    check('新用户初始为免费套餐', reg.json?.me?.plan === 'free', `plan=${reg.json?.me?.plan}`)
-    check('免费额度按配置生效（语音 3 秒）', reg.json?.me?.asr?.limit === 3, `limit=${reg.json?.me?.asr?.limit}`)
+    check('新用户初始为未开通（产品已无免费套餐）', reg.json?.me?.plan === 'none', `plan=${reg.json?.me?.plan}`)
+    check(
+      '未开通账号额度恒为 0',
+      reg.json?.me?.asr?.limit === 0 && reg.json?.me?.llm?.limit === 0,
+      `asr=${reg.json?.me?.asr?.limit} llm=${reg.json?.me?.llm?.limit}`
+    )
+    check(
+      '未开通 ≠ 已到期（expired 必须为 false）',
+      reg.json?.me?.paidActive === false && reg.json?.me?.expired === false,
+      `paidActive=${reg.json?.me?.paidActive} expired=${reg.json?.me?.expired}`
+    )
 
     const dup = await api('POST', '/api/auth/register', { body: { account: 'tester1', password: 'secret123' } })
     check('重复账号注册被拒（409）', dup.status === 409 && dup.json?.reason === 'account_taken')
@@ -387,13 +438,98 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     const badToken = await api('GET', '/api/me', { token: 'v1.bogus.bogus' })
     check('伪造 token 被拒（401）', badToken.status === 401)
 
-    /* ------------------------- 3. 兑换码校验 ------------------------- */
+    /* ---------------------- 3. 未开通：一步都不放行 ----------------------
+       这是"去掉免费体验"之后最关键的一条不变量：
+       注册只给账号、**不给任何额度**，所以未开通的账号连一次请求都不该被放行。
+       改造前这里会回落到 30 分钟免费语音 + 50 次提问 —— 那条白用的路径必须彻底消失，
+       所以这几条断言要同时钉住"被拒""文案说的是未开通""请求没打到上游"三件事。 */
+    const blockedLlm0 = await api('POST', '/v1/chat/completions', {
+      token,
+      body: { messages: [{ role: 'user', content: 'x' }], stream: false }
+    })
+    check(
+      '未开通账号提问被拒（402）',
+      blockedLlm0.status === 402 && blockedLlm0.json?.reason === 'llm_quota_exhausted',
+      `status=${blockedLlm0.status} reason=${blockedLlm0.json?.reason}`
+    )
+    check(
+      '拒绝文案指向"未开通"而不是"额度用完"',
+      /尚未开通会员/.test(blockedLlm0.json?.message || ''),
+      blockedLlm0.json?.message
+    )
+    check('被拒的提问没有打到上游', mock.state.llmCalls === 0, `calls=${mock.state.llmCalls}`)
+
+    const b0 = '----cmgunpaid0'
+    const blockedAsr0 = await api('POST', '/v1/audio/transcriptions', {
+      token,
+      raw: makeMultipart(b0, makeWav(0.5)),
+      contentType: `multipart/form-data; boundary=${b0}`
+    })
+    check(
+      '未开通账号文件转写同样被拒（402）',
+      blockedAsr0.status === 402 && blockedAsr0.json?.reason === 'asr_quota_exhausted',
+      `status=${blockedAsr0.status} reason=${blockedAsr0.json?.reason}`
+    )
+    check('被拒的转写没有打到上游', mock.state.asrFileCalls === 0, `calls=${mock.state.asrFileCalls}`)
+
+    /* ------------------------- 4. 兑换码校验 ------------------------- */
     const badCode = await api('POST', '/api/redeem', { token, body: { code: 'CMG-22222-33333-44444' } })
     check('不存在的兑换码被拒', badCode.status === 400 && badCode.json?.reason === 'not_found')
     const malformed = await api('POST', '/api/redeem', { token, body: { code: 'abc' } })
     check('格式错误的兑换码被拒', malformed.status === 400 && malformed.json?.reason === 'invalid_format')
 
-    /* --------------------------- 4. LLM 流式 --------------------------- */
+    /* --------------------- 5. 兑换开通（真实发码通路） ---------------------
+       未开通的账号什么都干不了，所以"能用"这件事必须先有一张码。
+       这里刻意走**真实的运营命令**（bin/issue.js）而不是直接改库 ——
+       要验的正是"运营发出去的码，用户能兑成会员"这条闭环。
+       它必须排在所有消耗额度的用例**之前**：产品没有免费额度，
+       没有这一步，后面每一条都会被 402 挡住。 */
+    const redeemCliOut = await new Promise((resolve) => {
+      const p = spawn(process.execPath, [path.join(SERVER_DIR, 'bin', 'issue.js'), 'issue', 'month', '2'], {
+        env: gatewayEnv(),
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      let out = ''
+      p.stdout.on('data', (d) => (out += d.toString()))
+      p.stderr.on('data', (d) => (out += d.toString()))
+      p.on('close', () => resolve(out))
+    })
+    const codes = [...redeemCliOut.matchAll(/CMG-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}/g)].map((m) => m[0])
+    check('CLI 能生成兑换码', codes.length === 2, `codes=${codes.length}`)
+
+    if (codes.length >= 1) {
+      const r1 = await api('POST', '/api/redeem', { token, body: { code: codes[0] } })
+      check('兑换码核销成功', r1.status === 200 && r1.json?.ok === true, r1.json?.message || '')
+      check('兑换后从"未开通"变成 pro', r1.json?.me?.plan === 'pro', `plan=${r1.json?.me?.plan}`)
+      check('兑换后 expired 归位为 false', r1.json?.me?.expired === false, `expired=${r1.json?.me?.expired}`)
+      check(
+        '兑换后额度按 pro 配置生效',
+        r1.json?.me?.asr?.limit === PRO_ASR_SECONDS && r1.json?.me?.llm?.limit === PRO_LLM_CALLS,
+        `asr=${r1.json?.me?.asr?.limit} llm=${r1.json?.me?.llm?.limit}`
+      )
+      check(
+        '兑换后立即可再次录音（额度已恢复）',
+        r1.json?.me?.asr?.remaining === PRO_ASR_SECONDS,
+        `remaining=${r1.json?.me?.asr?.remaining}`
+      )
+
+      const again = await api('POST', '/api/redeem', { token, body: { code: codes[0] } })
+      check('同一兑换码不能重复使用', again.status === 400 && again.json?.reason === 'already_redeemed')
+
+      if (codes.length >= 2) {
+        const r2 = await api('POST', '/api/redeem', {
+          token,
+          body: { code: ` ${codes[1].toLowerCase().replace(/-/g, ' ')} ` }
+        })
+        check(
+          '兑换码容错解析（小写 + 空格）且为续期',
+          r2.status === 200 && r2.json?.redeemed?.extended === true,
+          r2.json?.message || r2.text.slice(0, 120)
+        )
+      }
+    }
+
+    /* --------------------------- 6. LLM 流式 --------------------------- */
     const llm1 = await fetch(`${BASE}/v1/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -445,7 +581,7 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     )
     check('被拦截的请求没有打到上游', mock.state.llmCalls === 2, `calls=${mock.state.llmCalls}`)
 
-    /* -------------------------- 5. 文件转写 -------------------------- */
+    /* -------------------------- 7. 文件转写 -------------------------- */
     const boundary = '----cmgtestboundary'
     const wav = makeWav(0.5)
     const mp = makeMultipart(boundary, wav)
@@ -467,7 +603,7 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
       `used=${usedAfterFile}s`
     )
 
-    /* -------------------------- 6. 实时转写（正常） -------------------------- */
+    /* -------------------------- 8. 实时转写（正常） -------------------------- */
     const sr = 16000
 
     /**
@@ -553,7 +689,7 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     const usedAfterRt = afterRt.json?.me?.asr?.used ?? 0
     check('实时转写按音频时长计费（约 1 秒）', usedAfterRt >= 1, `累计 used=${usedAfterRt}s`)
 
-    /* ------------------ 7. 实时中途超额：必须熔断 ------------------ */
+    /* ------------------ 9. 实时中途超额：必须熔断 ------------------ */
     // 此时剩余约 1.5 秒，故意发 3 秒 —— 应该在 ~1.5 秒处被服务端掐断
     const overrun = await runRealtime(3)
     check('超额时收到 task-failed（熔断生效）', overrun.seen.includes('task-failed'), `events=${overrun.seen.join(',')}`)
@@ -563,7 +699,7 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     const afterOver = await api('GET', '/api/me', { token })
     check('熔断后语音额度归零', (afterOver.json?.me?.asr?.remaining ?? -1) === 0, `remaining=${afterOver.json?.me?.asr?.remaining}`)
 
-    /* ------------------ 8. 额度耗尽后新连接被拒 ------------------ */
+    /* ------------------ 10. 额度耗尽后新连接被拒 ------------------ */
     const blocked = await new Promise((resolve) => {
       const ws = new WebSocket(`ws://127.0.0.1:${PORT}/v1/asr/realtime`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -581,47 +717,10 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     })
     check('语音额度耗尽后实时通道被拒（402）', blocked.status === 402, `status=${blocked.status}`)
 
-    /* -------------------------- 9. 兑换开通 -------------------------- */
-    const redeemCliOut = await new Promise((resolve) => {
-      const p = spawn(process.execPath, [path.join(SERVER_DIR, 'bin', 'issue.js'), 'issue', 'trial7', '2'], {
-        env: { ...process.env, CMG_DATA_DIR: dataDir },
-        stdio: ['ignore', 'pipe', 'pipe']
-      })
-      let out = ''
-      p.stdout.on('data', (d) => (out += d.toString()))
-      p.stderr.on('data', (d) => (out += d.toString()))
-      p.on('close', () => resolve(out))
-    })
-    const codes = [...redeemCliOut.matchAll(/CMG-[0-9A-Z]{5}-[0-9A-Z]{5}-[0-9A-Z]{5}/g)].map((m) => m[0])
-    check('CLI 能生成兑换码', codes.length === 2, `codes=${codes.length}`)
-
-    if (codes.length >= 1) {
-      const r1 = await api('POST', '/api/redeem', { token, body: { code: codes[0] } })
-      check('兑换码核销成功', r1.status === 200 && r1.json?.ok === true, r1.json?.message || '')
-      check('兑换后升级为 pro', r1.json?.me?.plan === 'pro', `plan=${r1.json?.me?.plan}`)
-      check('兑换后语音额度变成月度额度', r1.json?.me?.asr?.limit === 72000, `limit=${r1.json?.me?.asr?.limit}`)
-      check('兑换后立即可再次录音（额度已恢复）', (r1.json?.me?.asr?.remaining ?? 0) > 70000, `remaining=${r1.json?.me?.asr?.remaining}`)
-
-      const again = await api('POST', '/api/redeem', { token, body: { code: codes[0] } })
-      check('同一兑换码不能重复使用', again.status === 400 && again.json?.reason === 'already_redeemed')
-
-      if (codes.length >= 2) {
-        const r2 = await api('POST', '/api/redeem', {
-          token,
-          body: { code: ` ${codes[1].toLowerCase().replace(/-/g, ' ')} ` }
-        })
-        check(
-          '兑换码容错解析（小写 + 空格）且为续期',
-          r2.status === 200 && r2.json?.redeemed?.extended === true,
-          r2.json?.message || r2.text.slice(0, 120)
-        )
-      }
-    }
-
-    /* ---------------------- 10. 注册即带码开通 ---------------------- */
+    /* ---------------------- 11. 注册即带码开通 ---------------------- */
     const out2 = await new Promise((resolve) => {
       const p = spawn(process.execPath, [path.join(SERVER_DIR, 'bin', 'issue.js'), 'issue', 'month', '1'], {
-        env: { ...process.env, CMG_DATA_DIR: dataDir },
+        env: gatewayEnv(),
         stdio: ['ignore', 'pipe', 'pipe']
       })
       let o = ''
@@ -635,7 +734,7 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     check('注册时直接带兑换码可开通', reg2.status === 200 && reg2.json?.redeemed != null, reg2.json?.message || '')
     check('开通后即为 pro', reg2.json?.me?.plan === 'pro', `plan=${reg2.json?.me?.plan}`)
 
-    /* ---------------------- 11. 停用账号立刻失效 ---------------------- */
+    /* ---------------------- 12. 停用账号立刻失效 ---------------------- */
     const { DatabaseSync } = require('node:sqlite')
     const direct = new DatabaseSync(path.join(dataDir, 'gateway.db'))
     direct.prepare('UPDATE users SET disabled = 1 WHERE account = ?').run('tester2')
@@ -643,7 +742,7 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     const disabled = await api('GET', '/api/me', { token: reg2.json?.token })
     check('账号被停用后 token 立刻失效（无需等过期）', disabled.status === 401, `status=${disabled.status}`)
 
-    /* ------------------ 12. 手机号注册 / 登录（console 通道） ------------------ */
+    /* ------------------ 13. 手机号注册 / 登录（console 通道） ------------------ */
     const PHONE = '13800001111'
 
     const badPhone = await api('POST', '/api/auth/sms/send', { body: { phone: '12345', purpose: 'register' } })
@@ -728,17 +827,14 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
     const afterLock = await api('POST', '/api/auth/login', { body: { phone: lockPhone, smsCode: lockCode } })
     check('锁定后连正确验证码也不放行', afterLock.status === 401 && afterLock.json?.reason === 'code_locked', `reason=${afterLock.json?.reason}`)
 
-    /* ------------- 13. webhook 短信通道（生产实际会走的路径） ------------- */
+    /* ------------- 14. webhook 短信通道（生产实际会走的路径） ------------- */
     gateway2 = spawn(process.execPath, [path.join(SERVER_DIR, 'index.js')], {
-      env: {
-        ...process.env,
-        CMG_DATA_DIR: dataDir, // 同一个库 + 同一个密钥文件
-        CMG_HOST: '127.0.0.1',
-        CMG_PORT: String(PORT2),
+      env: gatewayEnv({
+        CMG_PORT: String(PORT2), // 同一个库 + 同一个密钥文件
         CMG_SMS_PROVIDER: 'webhook',
         CMG_SMS_WEBHOOK_URL: `http://127.0.0.1:${mock.port}/sms`,
         CMG_SMS_WEBHOOK_TOKEN: 'test-sms-token'
-      },
+      }),
       stdio: ['ignore', 'pipe', 'pipe']
     })
     gateway2.stderr.on('data', (d) => gwLog.push('[gw2!] ' + d.toString().trim()))
@@ -814,7 +910,7 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
       check('发送失败不占用重发冷却（通道恢复后能立刻重试）', retry.status === 200, `status=${retry.status} ${retry.json?.message || ''}`)
     }
 
-    /* ------------- 14. 发卡平台回调：自动发码（收银台的落地形态） -------------
+    /* ------------- 15. 发卡平台回调：自动发码（收银台的落地形态） -------------
        验的是"钱进来之后码怎么出去"。这个端点能在**没有任何账号**的前提下凭空发会员，
        所以关闭态、鉴权、幂等、未知商品这四条必须锁死。 */
     const hook = (body, token = 'test-hook-token') => api('POST', '/api/hook/card', { body, token })
@@ -864,8 +960,20 @@ async function waitForHealth(base = BASE, timeoutMs = 15000) {
       hNoOrder.status === 400 && hNoOrder.json?.reason === 'order_required',
       `reason=${hNoOrder.json?.reason}`
     )
-    const hDirect = await hook({ order_id: 'HOOK-3', sku: 'trial7' })
-    check('sku 直接是类型时无需映射也能发', hDirect.json?.kind === 'trial7', JSON.stringify(hDirect.json?.kind))
+    const hDirect = await hook({ order_id: 'HOOK-3', sku: 'quarter' })
+    check(
+      'sku 直接是类型时无需映射也能发（quarter 不在映射表里）',
+      hDirect.json?.kind === 'quarter' && hDirect.json?.days === 93,
+      JSON.stringify(hDirect.json)
+    )
+    /* 「免费体验 7 天」已下线。这个 SKU 必须变成**未知商品**被拒 ——
+       否则老平台后台还挂着的商品会继续发出一批已经不该存在的类型。 */
+    const hRetired = await hook({ order_id: 'HOOK-5', sku: 'trial7' })
+    check(
+      '已下线的 trial7 被当作未知商品拒绝',
+      hRetired.status === 400 && hRetired.json?.reason === 'unknown_sku',
+      `status=${hRetired.status} reason=${hRetired.json?.reason}`
+    )
     const hMany = await hook({ order_id: 'HOOK-4', sku: 'month', count: 999 })
     check('单次签发数量被上限截断', hMany.json?.codes?.length === 20, `n=${hMany.json?.codes?.length}`)
 

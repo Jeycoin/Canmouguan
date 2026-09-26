@@ -252,9 +252,18 @@ async function main() {
       CMG_LLM_API_KEY: 'test-llm-key',
       CMG_LLM_BASE_URL: `http://127.0.0.1:${mock.port}`,
       CMG_LLM_MODEL: 'glm-4-flash',
-      CMG_FREE_ASR_SECONDS: '3600',
-      CMG_FREE_LLM_CALLS: '50',
       CMG_ALLOW_SELF_REGISTER: '1',
+      /**
+       * ⚠️ 显式清空邀请码。
+       *
+       * 网关启动时会加载 `server/.env`（`loadDotEnv` 只在变量**未定义**时才跳过），
+       * 开发机上那份真实配置会渗进探针。踩过一次：`.env` 里一句
+       * `CMG_ALLOW_SELF_REGISTER=0` 就让整套注册链路全线失败。这里已经显式写了 `'1'`，
+       * 邀请码同样要显式写死，否则将来 `.env` 里一加它，探针又会莫名其妙挂掉。
+       */
+      CMG_REGISTER_INVITE_CODE: '',
+      /* 额度用默认值即可：本探针注册时带码（= pro），跑的是"有额度时链路通不通"。
+         要验"未开通/耗尽被拦"那类判定，看 server/test/selftest.js。 */
       // 短信走本机 console 通道：验证码打进网关日志，探针从日志里捞（见 waitForSmsCode）。
       // 这正好也验证了"通道真的被调用了"，而不只是"接口回了 ok"。
       CMG_SMS_PROVIDER: 'console',

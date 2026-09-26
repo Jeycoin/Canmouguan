@@ -35,7 +35,7 @@ function fmtDate(ts?: number | null): string {
   return new Date(ts).toLocaleDateString('zh-CN')
 }
 
-/** 免费额度的周期是 lifetime，永远不会重置，所以这里要能表达"无重置" */
+/** 非按月套餐（含"未开通"）没有重置周期，所以这里要能表达"无重置" */
 function fmtReset(ms?: number | null): string {
   if (ms == null) return ''
   const days = Math.floor(ms / 86400000)
@@ -71,25 +71,52 @@ function QuotaBar({ label, used, limit, render }: { label: string; used: number;
 
 /* ------------------------------ 额度概览卡 ------------------------------ */
 
+/**
+ * 账号状态的展示口径。
+ *
+ * 三种状态必须**分开说**，因为它们对应三个完全不同的动作：
+ *   会员有效 → 只关心什么时候到期
+ *   已到期   → 去续费
+ *   未开通   → 先去买码
+ *
+ * 把后两者笼统写成"免费额度"正是这次改动的起因：用户会以为"额度用光了"，
+ * 而实际上他连额度都还没有。产品的形态是**纯付费**，没有免费额度这回事。
+ *
+ * `me.expired` 是可选的（旧版网关不返回它）—— 取不到就按"未开通"显示。
+ */
+function statusPill(me: CloudQuota): { label: string; cls: string } {
+  if (me.paidActive) return { label: me.planName, cls: 'ok' }
+  return me.expired ? { label: '会员已到期', cls: 'warn' } : { label: '未开通会员', cls: 'warn' }
+}
+
 export function CloudQuotaCard({ me }: { me: CloudQuota }) {
+  const st = statusPill(me)
   return (
     <>
       <div className="row wrap" style={{ gap: 6, marginBottom: 4 }}>
-        <span className={`pill ${me.paidActive ? 'ok' : ''}`}>{me.planName}</span>
+        <span className={`pill ${st.cls}`}>{st.label}</span>
         <span className="pill">{me.account}</span>
         {me.paidActive ? (
           <span className="pill">有效期至 {fmtDate(me.planExpiresAt)}</span>
-        ) : (
-          <span className="pill warn">免费额度</span>
-        )}
+        ) : me.expired ? (
+          <span className="pill">到期于 {fmtDate(me.expiredAt)}</span>
+        ) : null}
       </div>
+
+      {!me.paidActive && (
+        <div className="hint" style={{ marginTop: -2, marginBottom: 8 }}>
+          {me.expired
+            ? `会员已于 ${fmtDate(me.expiredAt)} 到期，兑换新的兑换码即可继续使用。`
+            : '尚未开通会员，兑换兑换码后即可使用语音转写与 AI 提问。'}
+        </div>
+      )}
+
       <QuotaBar
         label="语音转写额度"
         used={me.asr.used}
         limit={me.asr.limit}
         render={fmtDuration}
       />
-      {!me.paidActive && <div className="hint" style={{ marginTop: -4, marginBottom: 8 }}>免费额度为一次性，用完为止。</div>}
       <QuotaBar
         label="提问次数"
         used={me.llm.used}

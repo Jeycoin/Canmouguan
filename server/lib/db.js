@@ -21,13 +21,16 @@ db.exec('PRAGMA journal_mode = WAL')
 db.exec('PRAGMA synchronous = NORMAL')
 db.exec('PRAGMA foreign_keys = ON')
 
+/* 新账号默认 plan = 'none'（未开通，0 额度）。
+   产品没有免费套餐：注册只给账号，额度唯一来源是兑换码。
+   （列默认值只是兜底，createUser 一律显式传 plan。） */
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   account         TEXT    NOT NULL UNIQUE,
   pass_hash       TEXT    NOT NULL,
   pass_salt       TEXT    NOT NULL,
-  plan            TEXT    NOT NULL DEFAULT 'free',
+  plan            TEXT    NOT NULL DEFAULT 'none',
   plan_expires_at INTEGER,
   created_at      INTEGER NOT NULL,
   last_login_at   INTEGER,
@@ -142,7 +145,8 @@ function createUser({
   phone = null,
   passHash,
   passSalt,
-  plan = 'free',
+  /** 默认 'none' = 未开通。带兑换码注册时由 finishRegister 现场开通成 'pro'。 */
+  plan = 'none',
   planExpiresAt = null,
   note = null
 }) {

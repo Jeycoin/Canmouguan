@@ -172,7 +172,15 @@ function ContactRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-/** 套餐价目表。价格为 0 或 null 的显示成"免费体验"，避免出现"¥0"这种看着像 bug 的东西。 */
+/**
+ * 套餐价目表。
+ *
+ * 价格全部由服务端下发（`/api/plans`），这里**不做任何兜底定价** ——
+ * 客户端写死一个价格，改价时就会出现"界面 49、实际收 129"。
+ *
+ * `null` 表示网关没给这个套餐配价（例如新加了一档还没来得及配），
+ * 与"价格是 0"是两回事，所以用 `Number.isFinite` 判而不是真值判断。
+ */
 function PlanList({ info }: { info: StoreInfo }) {
   if (!info.plans.length) return null
   return (
@@ -187,7 +195,7 @@ function PlanList({ info }: { info: StoreInfo }) {
             {p.days} 天
           </span>
           <div style={{ flex: 1 }} />
-          <b style={{ color: 'var(--accent)' }}>{p.price ? `¥${p.price}` : '免费体验'}</b>
+          <b style={{ color: 'var(--accent)' }}>{Number.isFinite(p.price) ? `¥${p.price}` : '价格请咨询'}</b>
         </div>
       ))}
     </div>
@@ -259,7 +267,11 @@ export function PurchaseHint() {
   const { store } = info
   if (loading || !hasChannel(store)) return null
 
-  const cheapest = info.plans.filter((p) => p.price).sort((a, b) => (a.price || 0) - (b.price || 0))[0]
+  /* 取最便宜的一档做"¥X 起"。用 Number.isFinite 而不是真值判断：
+     价格缺失（null）要排除，但"0 元"是合法价格，不能一起被排掉。 */
+  const cheapest = info.plans
+    .filter((p) => Number.isFinite(p.price))
+    .sort((a, b) => (a.price ?? 0) - (b.price ?? 0))[0]
 
   return (
     <div className="hint" style={{ marginTop: 9 }}>

@@ -349,7 +349,9 @@ function handleRealtimeUpgrade(req, socket, head, url) {
       if (isBinary) {
         billedBytes += data.length
         // 超额度：立刻停，并且**用客户端已经认识的 task-failed 事件**告知原因，
-        // 这样界面不需要为"额度耗尽"写任何特殊分支
+        // 这样界面不需要为"额度耗尽"写任何特殊分支。
+        // 文案与 `quota.js` 的 denyText 保持一致口径：只有"兑换兑换码"这一条续期通路，
+        // 不要再写"开通会员"—— 产品里没有那个动作，用户会去找一个不存在的入口。
         if (secondsBilled() > budgetSeconds) {
           if (!quotaKilled) {
             quotaKilled = true
@@ -359,7 +361,7 @@ function handleRealtimeUpgrade(req, socket, head, url) {
                   header: {
                     event: 'task-failed',
                     error_code: 'QuotaExceeded',
-                    error_message: '语音额度已用完，录音已自动停止。兑换或开通会员后可继续使用。'
+                    error_message: '本月语音额度已用完，录音已自动停止。兑换新的兑换码后可继续使用。'
                   }
                 })
               )

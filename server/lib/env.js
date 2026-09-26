@@ -75,7 +75,11 @@ function loadOrCreateSecret() {
 /**
  * 套餐定义。
  *
- * ⚠️ 这里的额度直接决定毛利，改之前先算成本（见 server/README.md 的成本表）：
+ * ⚠️ **这里没有免费套餐** —— 产品形态是纯付费：注册只给一个账号，不给任何额度。
+ * 额度的唯一来源是兑换码（见 `REDEEM_PLANS`）。所以"未开通 / 已到期"的用户
+ * 落到的是 0 额度的占位套餐 `none`，而不是一段可以白用的额度。
+ *
+ * ⚠️ pro 的额度直接决定毛利，改之前先算成本（见 server/README.md 的成本表）：
  *   - realtime ASR ¥0.864/小时，file ASR ¥0.288/小时
  *   - **双通道同时采集 ⇒ 一场 1 小时面试消耗 2 小时 ASR 额度、成本约 ¥1.15**
  *   - 所以 pro 给 20 小时 ASR 额度 ≈ 10 场面试 ≈ ¥11.5 硬成本
@@ -87,7 +91,7 @@ function num(name, fallback) {
   return Number.isFinite(v) && v > 0 ? v : fallback
 }
 
-/** 售价允许为 0（免费体验），所以不能用上面的 num()（它把 0 当成"没设"） */
+/** 售价允许为 0（做活动白送），所以不能用上面的 num() —— 它把 0 当成"没设" */
 function price(name, fallback) {
   const raw = process.env[name]
   if (raw === undefined || raw.trim() === '') return fallback
@@ -109,15 +113,24 @@ function parseSkuMap(raw) {
 }
 
 const PLANS = {
-  free: {
-    id: 'free',
-    name: '免费体验',
-    /** lifetime = 一次性额度，永不清零；这是"免费体验"，用完为止 */
-    period: 'lifetime',
-    asrSeconds: num('CMG_FREE_ASR_SECONDS', 1800), // 30 分钟
-    llmCalls: num('CMG_FREE_LLM_CALLS', 50),
-    /** 同一账号允许同时在线的实时转写通道数 */
-    concurrentRealtime: 1
+  /**
+   * 占位套餐：**未开通 或 已到期**的账号落在这里，额度恒为 0。
+   *
+   * 它不是为了"限制"而存在（0 额度本身就限制了），而是为了让 `entitlement()`
+   * 在任何输入下都能返回一个合法的 plan 对象 —— 否则每个调用点都要处理 `undefined`，
+   * 那种散落的判空迟早会漏一处，而漏掉的那处就是"没买也能用"。
+   *
+   * ⚠️ 给用户的解释**不在这个对象里**（它只有 name），而在 `quota.js` 的提示文案里 ——
+   * 那些文案要区分"从没开通过"和"开通了但已到期"，只有 quota 拿得到 user。
+   */
+  none: {
+    id: 'none',
+    name: '未开通',
+    /** none = 没有计费周期；额度永远不重置，因为额度就是 0 */
+    period: 'none',
+    asrSeconds: 0,
+    llmCalls: 0,
+    concurrentRealtime: 0
   },
   pro: {
     id: 'pro',
@@ -130,9 +143,17 @@ const PLANS = {
   }
 }
 
-/** 兑换码能换到的套餐与天数 */
+/**
+ * 兑换码能换到的套餐与天数。
+ *
+ * ⚠️ **这里是"卖什么"的唯一真相来源**：`/api/plans` 直接遍历它生成价目表，
+ * `payhook` 也用它判断平台传来的 SKU 合不合法。
+ * 加一档只改这里 + `STORE_PRICES`，客户端一行都不用动。
+ *
+ * 天数刻意用 31/93/366 而不是"自然月"：兑换码发的是**天数**，
+ * 按自然月算会让"1 月 31 日买的月卡"在 2 月缩水成 28 天，解释成本比省下的几天高得多。
+ */
 const REDEEM_PLANS = {
-  trial7: { plan: 'pro', days: 7, name: '专业版 7 天' },
   month: { plan: 'pro', days: 31, name: '专业版 1 个月' },
   quarter: { plan: 'pro', days: 93, name: '专业版 3 个月' },
   year: { plan: 'pro', days: 366, name: '专业版 1 年' }
@@ -235,10 +256,9 @@ module.exports = {
 
   /**
    * 各套餐售价（元）。仅用于**展示**，网关不参与收款。
-   * 试用的默认 0 表示"免费体验，无需购买"。
+   * 允许为 0（例如做活动白送一批），所以下面用的是 price() 而不是 num()。
    */
   STORE_PRICES: {
-    trial7: price('CMG_PRICE_TRIAL7', 0),
     month: price('CMG_PRICE_MONTH', 49),
     quarter: price('CMG_PRICE_QUARTER', 129),
     year: price('CMG_PRICE_YEAR', 399)

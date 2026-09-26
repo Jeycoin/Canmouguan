@@ -86,12 +86,24 @@ export interface CloudQuota {
   account: string
   plan: string
   planName: string
-  /** 付费会员是否仍在有效期内（过期后服务端会回落成免费额度） */
+  /**
+   * 会员是否仍在有效期内。
+   * ⚠️ **本产品没有免费额度** —— 为 `false` 时额度恒为 0（语音与提问都会被服务端拒绝）。
+   */
   paidActive: boolean
+  /**
+   * 开通过、但已经到期。
+   *
+   * 与"从未开通"必须区分：一个要说"续费"，一个要说"先开通"。
+   * 可选是因为**旧版网关不会返回它** —— 那种情况下按"未开通"显示即可，不要崩。
+   */
+  expired?: boolean
   planExpiresAt: number | null
+  /** 已到期时的到期时间戳（`expired` 为真时才有值），仅用于展示 */
+  expiredAt?: number | null
   asr: { used: number; limit: number; remaining: number }
   llm: { used: number; limit: number; remaining: number; tokens: number }
-  /** 距下期重置还有多久（毫秒）；免费额度是终身一次性，为 null */
+  /** 距下期重置还有多久（毫秒）；非按月套餐（含未开通）为 null */
   resetInMs: number | null
 }
 

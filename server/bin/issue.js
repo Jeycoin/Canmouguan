@@ -7,11 +7,14 @@
  *
  * 用法：
  *   node server/bin/issue.js issue month 10            # 生成 10 个「专业版 1 个月」兑换码
- *   node server/bin/issue.js issue trial7 5 --note 内测
+ *   node server/bin/issue.js issue year 3 --note 首批发售
  *   node server/bin/issue.js list <批次号>              # 看某批码的核销情况
  *   node server/bin/issue.js users                     # 用户列表
  *   node server/bin/issue.js usage <账号>               # 某账号的用量明细
  *   node server/bin/issue.js stats                     # 全局概览
+ *
+ * 注：可用类型见 `server/lib/env.js` 的 REDEEM_PLANS（month / quarter / year）。
+ * 直接执行不带参数会把这几个类型列出来。
  */
 
 const originalEmitWarning = process.emitWarning
@@ -87,11 +90,14 @@ function cmdUsers() {
   console.log('  ID   账号                     套餐      到期            已用语音      已用提问  注册时间')
   for (const u of users) {
     const ent = quota.entitlement(u)
-    const plan = ent.paidActive ? `${ent.plan.id}(${ent.plan.name})` : 'free'
+    /* 未开通与已到期都显示 'none'（额度都是 0），用末尾的 [已到期] 区分 ——
+       运营真正要区分的就是这两种人：一个要拉新，一个要催续费。 */
+    const plan = ent.paidActive ? `${ent.plan.id}(${ent.plan.name})` : 'none'
     console.log(
       `  ${String(u.id).padEnd(4)} ${u.account.padEnd(24)} ${plan.padEnd(9)} ${fmtTime(ent.planExpiresAt).padEnd(15)} ` +
         `${fmtHours(ent.asr.used).padEnd(13)} ${String(ent.llm.used).padEnd(9)} ${fmtTime(u.created_at)}` +
-        (u.disabled ? '  [已停用]' : '')
+        (u.disabled ? '  [已停用]' : '') +
+        (ent.expired ? `  [已到期 ${fmtTime(ent.expiredAt)}]` : '')
     )
   }
   console.log('')
@@ -109,9 +115,10 @@ function cmdUsage() {
     process.exit(1)
   }
   const ent = quota.entitlement(user)
+  const state = ent.paidActive ? `${ent.plan.name}（有效）` : ent.expired ? '已到期（无有效额度）' : '未开通（无有效额度）'
   console.log(`\n账号 ${user.account}`)
-  console.log(`  套餐权重　${ent.paidActive ? `${ent.plan.name}（有效）` : '免费体验（未开通或已到期）'}`)
-  console.log(`  到期时间　${fmtTime(ent.planExpiresAt)}`)
+  console.log(`  套餐权重　${state}`)
+  console.log(`  到期时间　${fmtTime(ent.planExpiresAt || ent.expiredAt)}`)
   console.log(`  计费周期　${ent.period}`)
   console.log(`  语音用量　${fmtHours(ent.asr.used)} / ${fmtHours(ent.asr.limit)}　剩余 ${fmtHours(ent.asr.remaining)}`)
   console.log(`  提问次数　${ent.llm.used} / ${ent.llm.limit}　剩余 ${ent.llm.remaining}`)
